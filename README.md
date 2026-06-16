@@ -1,11 +1,11 @@
 # Cinch MCP Server
 
-Public MCP bridge for [Cinch](https://github.com/YOUR_ORG/Cinch) project management. Runs locally on your machine and talks to the hosted Cinch API using a Personal Access Token (PAT).
+Public MCP bridge for [Cinch](https://app.cinch.work) project management. Runs locally on your machine and talks to the hosted Cinch API using a Personal Access Token (PAT).
 
 ## Install
 
 ```bash
-git clone https://github.com/YOUR_ORG/cinch-mcp-server.git
+git clone https://github.com/jsilff/cinch-mcp-server.git
 cd cinch-mcp-server
 npm install
 npm run build
@@ -65,12 +65,5 @@ Add the same block to **Settings → MCP** or `.cursor/mcp.json` in your project
 ```bash
 npm run dev
 ```
-
-## Related repos
-
-- **Cinch** (private) — web app and API this server calls
-- This repo — local MCP stdio server only; no secrets beyond your PAT in env
-
-## License
 
 MIT — see [LICENSE](./LICENSE).
