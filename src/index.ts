@@ -14,11 +14,11 @@ import { z } from 'zod';
  * Cinch MCP Server
  * 
  * A Model Context Protocol server that bridges to the Cinch tRPC API.
- * Uses Personal Access Tokens (PAT) for authentication.
+ * Uses an organization-wide AI Token (PAT) for authentication.
  * 
  * Configuration via environment variables:
  * - CINCH_API_URL: Hosted Cinch app URL (default: https://app.cinch.work)
- * - CINCH_PAT: Personal Access Token for authentication
+ * - CINCH_PAT: AI Token from Cinch → Settings → Personal Access Tokens
  * - CINCH_COMPANY_ID: Optional company ID to scope operations to
  */
 

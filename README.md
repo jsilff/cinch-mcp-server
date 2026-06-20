@@ -16,10 +16,17 @@ npm run build
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `CINCH_API_URL` | Yes | Hosted Cinch URL (e.g. `https://app.cinch.work`) |
-| `CINCH_PAT` | Yes | Personal Access Token from Cinch → Settings → Personal Access Tokens |
+| `CINCH_PAT` | Yes | **AI Token** from Cinch → Settings → Personal Access Tokens (click **AI Token**, use the **AI Assistant Preset** scopes) |
 | `CINCH_COMPANY_ID` | No | Scope operations to one organization |
 
-Create a PAT with scopes for the tools you need (see table below). In the Cinch app, use **Settings → MCP Setup** for a guided config and copy-paste JSON.
+Create an **organization-wide AI Token** with scopes for the tools you need (see table below). Do **not** use a project-scoped **API Token** — those are for the REST API and dashboards only. In the Cinch app, use **Settings → MCP Setup** (or Help → Connect Cinch to Your AI Tool) for a guided config and copy-paste JSON.
+
+## REST API vs MCP
+
+| Use case | Token type | API |
+|----------|------------|-----|
+| AI assistants (Cursor, Claude) | **AI Token** (org-wide, scope-based) | tRPC via this MCP server |
+| Dashboards & data exports | **API Token** (project-scoped, Read or Read & Write) | REST at `/api/rest/*` — see Help → REST API in the app |
 
 ## Claude Desktop
 
