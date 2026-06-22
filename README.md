@@ -49,7 +49,15 @@ Config file (macOS): `~/Library/Application Support/Claude/claude_desktop_config
 
 ## Cursor
 
-Add the same block to **Settings → MCP** or `.cursor/mcp.json` in your project.
+Add Cinch at the **user level** so it works in every workspace (same reliability as built-in MCP servers like Chrome DevTools and Figma):
+
+1. **Cursor → Settings → Tools & MCP → Add MCP server**, or edit `~/.cursor/mcp.json` on macOS
+2. Paste the JSON block below (update the path and token)
+3. **Remove** any duplicate Cinch entry from a project-level `.cursor/mcp.json` if you added one earlier
+4. **Quit Cursor completely** (Cmd+Q), reopen, and confirm **cinch** shows a tool count in Tools & MCP
+5. Start a **new Agent chat**
+
+Do **not** rely on a project-only `.cursor/mcp.json` — project-scoped MCP servers connect later and tools may not appear until you toggle or restart.
 
 ## Tools
 
