@@ -73,4 +73,15 @@ Add the same block to **Settings → MCP** or `.cursor/mcp.json` in your project
 npm run dev
 ```
 
+```bash
+npm install
+npm run build
+npm start
+```
+
+### v1.1.0
+
+- Migrated to the MCP SDK high-level `McpServer` API (`registerTool` / `registerResource`).
+- Tool `inputSchema` values are now emitted as proper JSON Schema so clients (e.g. Cursor) register all 11 tools.
+
 MIT — see [LICENSE](./LICENSE).

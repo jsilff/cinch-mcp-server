@@ -1,41 +1,37 @@
 #!/usr/bin/env node
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 /**
  * Cinch MCP Server
- * 
- * A Model Context Protocol server that bridges to the Cinch tRPC API.
- * Uses an organization-wide AI Token (PAT) for authentication.
- * 
- * Configuration via environment variables:
- * - CINCH_API_URL: Hosted Cinch app URL (default: https://app.cinch.work)
- * - CINCH_PAT: AI Token from Cinch → Settings → Personal Access Tokens
- * - CINCH_COMPANY_ID: Optional company ID to scope operations to
+ *
+ * Bridges to the Cinch tRPC API using an organization-wide AI Token (PAT).
+ *
+ * Environment:
+ * - CINCH_API_URL — hosted Cinch URL (default: https://app.cinch.work)
+ * - CINCH_PAT — AI Token from Cinch → Settings → Personal Access Tokens
+ * - CINCH_COMPANY_ID — optional default organization scope
  */
 
-// Configuration from environment
 const API_URL = process.env.CINCH_API_URL || 'https://app.cinch.work';
 const PAT = process.env.CINCH_PAT;
-const DEFAULT_COMPANY_ID = process.env.CINCH_COMPANY_ID;
 
 if (!PAT) {
   console.error('Error: CINCH_PAT environment variable is required');
   process.exit(1);
 }
 
-// tRPC endpoint
 const TRPC_URL = `${API_URL.replace(/\/$/, '')}/api/trpc`;
 
-// HTTP client for tRPC calls (Cinch uses superjson; queries are GET, mutations are POST)
+const taskStatusSchema = z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'DONE', 'CANCELLED']);
+
+type CompanyMembership = {
+  companyId: string;
+  company: { name: string; slug: string };
+};
+
 async function trpcCall<T>(
   procedure: string,
   input: unknown | undefined,
@@ -82,296 +78,242 @@ async function trpcCall<T>(
   return payload.result?.data?.json as T;
 }
 
-// Define tool schemas using Zod
-const CreateProjectSchema = z.object({
-  name: z.string().min(1).max(100),
-  key: z.string().min(2).max(10).toUpperCase(),
-  description: z.string().optional(),
-  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default('#6366f1'),
-  groupId: z.string().optional(),
-  companyId: z.string().optional(),
-});
+function textResult(result: unknown, isError = false) {
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+      },
+    ],
+    ...(isError ? { isError: true as const } : {}),
+  };
+}
 
-const CreateTaskSchema = z.object({
-  projectId: z.string(),
-  title: z.string().min(1).max(500),
-  description: z.string().optional(),
-  parentId: z.string().optional(),
-  assigneeId: z.string().optional(),
-  followerIds: z.array(z.string()).optional(),
-  dueDate: z.string().datetime().optional(),
-  startDate: z.string().datetime().optional(),
-  priority: z.number().min(0).max(4).default(0),
-  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'DONE', 'CANCELLED']).default('TODO'),
-});
-
-const UpdateTaskSchema = z.object({
-  id: z.string(),
-  title: z.string().min(1).max(500).optional(),
-  description: z.string().optional(),
-  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'DONE', 'CANCELLED']).optional(),
-  priority: z.number().min(0).max(4).optional(),
-  assigneeId: z.string().optional(),
-  dueDate: z.string().datetime().nullable().optional(),
-  startDate: z.string().datetime().nullable().optional(),
-  completedAt: z.string().datetime().nullable().optional(),
-});
-
-const ListProjectsSchema = z.object({
-  includeArchived: z.boolean().default(false),
-  groupId: z.string().optional(),
-  companyId: z.string().optional(),
-});
-
-const ListTasksSchema = z.object({
-  projectId: z.string().optional(),
-  status: z.enum(['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'DONE', 'CANCELLED']).optional(),
-  assigneeId: z.string().optional(),
-  parentId: z.string().nullable().optional(),
-  includeSubtasks: z.boolean().default(false),
-  companyId: z.string().optional(),
-  cursor: z.string().optional(),
-  limit: z.number().min(1).max(100).default(50),
-});
-
-const GetProjectSchema = z.object({
-  id: z.string(),
-});
-
-const GetTaskSchema = z.object({
-  id: z.string(),
-});
-
-const CreateCommentSchema = z.object({
-  taskId: z.string(),
-  content: z.string().min(1),
-  parentId: z.string().optional(),
-});
-
-const ListCommentsSchema = z.object({
-  taskId: z.string(),
-  cursor: z.string().optional(),
-  limit: z.number().min(1).max(50).default(20),
-});
-
-const ListCompaniesSchema = z.object({});
-
-const GetCompanySchema = z.object({
-  companyId: z.string(),
-});
-
-// MCP Server instance
-const server = new Server(
-  {
-    name: 'cinch-mcp',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
-    },
+async function runTool<T>(fn: () => Promise<T>) {
+  try {
+    return textResult(await fn());
+  } catch (error) {
+    return textResult(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+      true
+    );
   }
+}
+
+async function listCompanyMemberships(): Promise<CompanyMembership[]> {
+  return trpcCall<CompanyMembership[]>('company.listMemberships', undefined, 'query');
+}
+
+const server = new McpServer({
+  name: 'cinch-mcp',
+  version: '1.1.0',
+});
+
+// --- Project tools ---
+
+server.registerTool(
+  'create_project',
+  {
+    description: 'Create a new project in Cinch',
+    inputSchema: {
+      name: z.string().min(1).max(100),
+      key: z.string().min(2).max(10).describe('Short project key (2–10 characters)'),
+      description: z.string().optional(),
+      color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().describe('Hex color, e.g. #6366f1'),
+      groupId: z.string().optional(),
+      companyId: z.string().optional(),
+    },
+  },
+  async (input) =>
+    runTool(() =>
+      trpcCall('project.create', { ...input, key: input.key.toUpperCase() }, 'mutation')
+    )
 );
 
-// List available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    // Project tools
-    {
-      name: 'create_project',
-      description: 'Create a new project in Cinch',
-      inputSchema: CreateProjectSchema,
+server.registerTool(
+  'list_projects',
+  {
+    description: 'List projects (optionally filtered by company, group, archived status)',
+    inputSchema: {
+      includeArchived: z.boolean().optional().describe('Include archived projects'),
+      groupId: z.string().optional(),
+      companyId: z.string().optional(),
     },
-    {
-      name: 'list_projects',
-      description: 'List projects (optionally filtered by company, group, archived status)',
-      inputSchema: ListProjectsSchema,
-    },
-    {
-      name: 'get_project',
-      description: 'Get detailed project information including members and custom fields',
-      inputSchema: GetProjectSchema,
-    },
-    // Task tools
-    {
-      name: 'create_task',
-      description: 'Create a new task in a project',
-      inputSchema: CreateTaskSchema,
-    },
-    {
-      name: 'list_tasks',
-      description: 'List tasks with various filters (project, status, assignee, etc.)',
-      inputSchema: ListTasksSchema,
-    },
-    {
-      name: 'get_task',
-      description: 'Get detailed task information',
-      inputSchema: GetTaskSchema,
-    },
-    {
-      name: 'update_task',
-      description: 'Update an existing task',
-      inputSchema: UpdateTaskSchema,
-    },
-    // Comment tools
-    {
-      name: 'create_comment',
-      description: 'Add a comment to a task (supports @mentions)',
-      inputSchema: CreateCommentSchema,
-    },
-    {
-      name: 'list_comments',
-      description: 'List comments on a task',
-      inputSchema: ListCommentsSchema,
-    },
-    // Company tools
-    {
-      name: 'list_companies',
-      description: 'List all companies the authenticated user is a member of',
-      inputSchema: ListCompaniesSchema,
-    },
-    {
-      name: 'get_company',
-      description: 'Get company details including members and groups',
-      inputSchema: GetCompanySchema,
-    },
-  ],
-}));
+  },
+  async (input) => runTool(() => trpcCall('project.list', input, 'query'))
+);
 
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+server.registerTool(
+  'get_project',
+  {
+    description: 'Get detailed project information including members and custom fields',
+    inputSchema: {
+      id: z.string().describe('Project ID'),
+    },
+  },
+  async ({ id }) => runTool(() => trpcCall('project.get', { id }, 'query'))
+);
 
-  try {
-    let result: unknown;
+// --- Task tools ---
 
-    switch (name) {
-      // Project tools
-      case 'create_project': {
-        const input = CreateProjectSchema.parse(args);
-        result = await trpcCall('project.create', input, 'mutation');
-        break;
-      }
-      case 'list_projects': {
-        const input = ListProjectsSchema.parse(args);
-        result = await trpcCall('project.list', input, 'query');
-        break;
-      }
-      case 'get_project': {
-        const input = GetProjectSchema.parse(args);
-        result = await trpcCall('project.get', input, 'query');
-        break;
-      }
-      // Task tools
-      case 'create_task': {
-        const input = CreateTaskSchema.parse(args);
-        result = await trpcCall('task.create', input, 'mutation');
-        break;
-      }
-      case 'list_tasks': {
-        const input = ListTasksSchema.parse(args);
-        result = await trpcCall('task.list', input, 'query');
-        break;
-      }
-      case 'get_task': {
-        const input = GetTaskSchema.parse(args);
-        result = await trpcCall('task.get', input, 'query');
-        break;
-      }
-      case 'update_task': {
-        const input = UpdateTaskSchema.parse(args);
-        result = await trpcCall('task.update', input, 'mutation');
-        break;
-      }
-      // Comment tools
-      case 'create_comment': {
-        const input = CreateCommentSchema.parse(args);
-        result = await trpcCall('comment.create', input, 'mutation');
-        break;
-      }
-      case 'list_comments': {
-        const input = ListCommentsSchema.parse(args);
-        result = await trpcCall('comment.list', input, 'query');
-        break;
-      }
-      // Company tools
-      case 'list_companies': {
-        result = await trpcCall('company.listMemberships', undefined, 'query');
-        break;
-      }
-      case 'get_company': {
-        const input = GetCompanySchema.parse(args);
-        result = await trpcCall('company.get', input, 'query');
-        break;
-      }
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+server.registerTool(
+  'create_task',
+  {
+    description: 'Create a new task in a project',
+    inputSchema: {
+      projectId: z.string(),
+      title: z.string().min(1).max(500),
+      description: z.string().optional(),
+      parentId: z.string().optional(),
+      assigneeId: z.string().optional(),
+      followerIds: z.array(z.string()).optional(),
+      dueDate: z.string().datetime().optional(),
+      startDate: z.string().datetime().optional(),
+      priority: z.number().min(0).max(4).optional(),
+      status: taskStatusSchema.optional(),
+    },
+  },
+  async (input) => runTool(() => trpcCall('task.create', input, 'mutation'))
+);
+
+server.registerTool(
+  'list_tasks',
+  {
+    description: 'List tasks with various filters (project, status, assignee, etc.)',
+    inputSchema: {
+      projectId: z.string().optional(),
+      status: taskStatusSchema.optional(),
+      assigneeId: z.string().optional(),
+      parentId: z.string().nullable().optional(),
+      includeSubtasks: z.boolean().optional(),
+      companyId: z.string().optional(),
+      cursor: z.string().optional(),
+      limit: z.number().min(1).max(100).optional(),
+    },
+  },
+  async (input) => runTool(() => trpcCall('task.list', input, 'query'))
+);
+
+server.registerTool(
+  'get_task',
+  {
+    description:
+      'Get detailed task information including comments, attachments (URLs), tags, and subtasks',
+    inputSchema: {
+      id: z.string().describe('Task ID'),
+    },
+  },
+  async ({ id }) => runTool(() => trpcCall('task.get', { id }, 'query'))
+);
+
+server.registerTool(
+  'update_task',
+  {
+    description: 'Update an existing task',
+    inputSchema: {
+      id: z.string(),
+      title: z.string().min(1).max(500).optional(),
+      description: z.string().optional(),
+      status: taskStatusSchema.optional(),
+      priority: z.number().min(0).max(4).optional(),
+      assigneeId: z.string().optional(),
+      dueDate: z.string().datetime().nullable().optional(),
+      startDate: z.string().datetime().nullable().optional(),
+      completedAt: z.string().datetime().nullable().optional(),
+    },
+  },
+  async (input) => runTool(() => trpcCall('task.update', input, 'mutation'))
+);
+
+// --- Comment tools ---
+
+server.registerTool(
+  'create_comment',
+  {
+    description: 'Add a comment to a task (supports @mentions)',
+    inputSchema: {
+      taskId: z.string(),
+      content: z.string().min(1),
+      parentId: z.string().optional(),
+    },
+  },
+  async (input) => runTool(() => trpcCall('comment.create', input, 'mutation'))
+);
+
+server.registerTool(
+  'list_comments',
+  {
+    description: 'List comments on a task',
+    inputSchema: {
+      taskId: z.string(),
+      cursor: z.string().optional(),
+      limit: z.number().min(1).max(50).optional(),
+    },
+  },
+  async (input) => runTool(() => trpcCall('comment.list', input, 'query'))
+);
+
+// --- Company tools ---
+
+server.registerTool(
+  'list_companies',
+  {
+    description: 'List all companies the authenticated user is a member of',
+  },
+  async () => runTool(() => listCompanyMemberships())
+);
+
+server.registerTool(
+  'get_company',
+  {
+    description: 'Get company details including members and groups',
+    inputSchema: {
+      companyId: z.string(),
+    },
+  },
+  async ({ companyId }) => runTool(() => trpcCall('company.get', { companyId }, 'query'))
+);
+
+// --- Resources (organizations) ---
+
+server.registerResource(
+  'company',
+  new ResourceTemplate('cinch://company/{companyId}', {
+    list: async () => {
+      const companies = await listCompanyMemberships();
+      return {
+        resources: companies.map((membership) => ({
+          uri: `cinch://company/${membership.companyId}`,
+          name: membership.company.name,
+          description: `Company: ${membership.company.name} (${membership.company.slug})`,
+          mimeType: 'application/json',
+        })),
+      };
+    },
+  }),
+  {
+    description: 'Cinch organization (company) details',
+    mimeType: 'application/json',
+  },
+  async (uri, variables) => {
+    const companyId = variables.companyId;
+    if (!companyId) {
+      throw new Error(`Missing companyId in resource URI: ${uri.href}`);
     }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-});
-
-// List available resources
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  const companies = await trpcCall<Array<{ companyId: string; company: { name: string; slug: string } }>>(
-    'company.listMemberships',
-    undefined,
-    'query'
-  );
-  
-  return {
-    resources: companies.map(m => ({
-      uri: `cinch://company/${m.companyId}`,
-      name: m.company.name,
-      description: `Company: ${m.company.name} (${m.company.slug})`,
-      mimeType: 'application/json',
-    })),
-  };
-});
-
-// Read a resource
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const { uri } = request.params;
-  
-  // Handle cinch://company/{id} URIs
-  const match = uri.match(/^cinch:\/\/company\/(.+)$/);
-  if (match) {
-    const companyId = match[1];
     const company = await trpcCall('company.get', { companyId }, 'query');
     return {
       contents: [
         {
-          uri,
+          uri: uri.href,
           mimeType: 'application/json',
           text: JSON.stringify(company, null, 2),
         },
       ],
     };
   }
-  
-  throw new Error(`Unknown resource URI: ${uri}`);
-});
+);
 
-// Start the server
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
